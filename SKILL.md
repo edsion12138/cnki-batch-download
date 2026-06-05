@@ -35,15 +35,15 @@ Mac 导入用的坐标和工具链不同，详见第6步的分支代码。
 
 ## 关键规则（每次执行前过一遍）
 
-0. **首次使用自检**：确认 `bb-browser`、`pywinauto`、`python3` 可用；下载目录 `D:\下载\` 存在
-1. 登录检查用 `!innerText.includes('机构登录')`，不是 `includes('退出')`
-2. 清除不靠页面按钮，直接 JS uncheck + 验证 checked=0。新/旧版知网页面都适用
-3. 排序后等待 3s，再重新 `querySelectorAll`（DOM 全作废）
-4. "批量操作"下拉菜单必须用 `bb-browser click @ref`，JS click 无效
-5. **每次导出前，先 `bb-browser tab | grep batch` 关闭旧批量页**，让 CNKI 自己创建新的
-6. 下载/导入按钮都用 native click（`bb-browser click @ref`）
-7. 导入后提示用户等待下载，用户说"继续"后再验证
-8. 中途遇到验证码：暂停并提示用户手动完成
+0. **首次自检**：`bb-browser`、`pywinauto`、`python3` 可用
+1. 登录检查用 `!innerText.includes('机构登录')`
+2. 清除后验证 checked=0；排序后等 3s 重新 `querySelectorAll`
+3. **CSSCI 每次搜索后单独验证**：高级检索页导航会重置表单，搜索前必须单独 `querySelector('#CSSCI').click()`
+4. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
+5. **JS eval 只用 function 表达式**：禁用箭头函数 + var + return 混用，避免 `SyntaxError`
+6. **导出前必须关旧 batch tab**：`bb-browser tab | grep batch` 找出来逐个 close
+7. **pywinauto 用预写脚本执行**：不要 inline 写，避免 auto mode 拦截
+8. 中途遇到验证码：暂停提示用户手动完成
 
 ---
 
