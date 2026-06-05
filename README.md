@@ -20,9 +20,10 @@ git clone https://github.com/edsion12138/cnki-batch-download.git ~/.claude/skill
 ## 前置条件
 
 1. 安装[知网研学](https://estudy.cnki.net/)桌面端并登录
-2. Chrome 浏览器已登录知网（机构登录）
-3. 在研学中预先创建目标专题
-4. 每日批量下载限额 100 篇（校园网 IP）
+2. **研学内设置优先 PDF**：设置 → 知网获取全文设置 → 其他设置 → 勾选"默认优先获取PDF格式文献"（否则下载全是 CAJ 文件，后续无法处理）
+3. Chrome 浏览器已登录知网（机构登录）
+4. 在研学中预先创建目标专题
+5. 每日批量下载限额 100 篇（校园网 IP）
 
 ### 依赖
 
