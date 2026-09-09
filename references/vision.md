@@ -57,9 +57,11 @@ sleep 1.5
 # ③ 截图确认下拉已展开、能看到"下载到研学"
 bb-browser screenshot /tmp/step4_dropdown.png --tab <tab>   # → Read：确认菜单展开且含"下载到研学"。没展开→重点或换ref
 bb-browser eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')" --tab <tab>
-sleep 3
-
-# ④ 确认新 batch tab（做最可靠的结构性确认，截图作为补充）
+# 等新 batch tab 出现（原 sleep 3，改轮询 tab 列表，最多 ~10s）
+for i in $(seq 1 20); do
+  bb-browser tab 2>/dev/null | grep -q "manage/batch" && break
+  sleep 0.5
+done
 bb-browser tab | grep "manage/batch"
 ```
 
@@ -71,12 +73,12 @@ bb-browser tab | grep "manage/batch"
 # ① 截 batch tab，看"批量下载已选 N篇"和按钮
 bb-browser screenshot /tmp/step5_batch.png --tab <batch>   # → Read：确认 N 篇数量正确、按钮可见
 bb-browser snap -i -c --tab <batch> | grep "批量下载"
+# 记下下载前最新 es6 的 mtime，作为"新文件"的参照
+REF=$(stat -c %Y /d/下载/*.es6 2>/dev/null | sort -n | tail -1)
 bb-browser click @<ref> --tab <batch>
-sleep 3
-
-# ② 确认 es6 已落地 + 截图看下载提示
+# 等新 es6 落地（替代固定 sleep 3，等文件出现即返回）
+bash scripts/wait_es6.sh "$REF" || echo "没等到新es6，用 ls 兜底查看"
 ls -lt /d/下载/ | head -1
-bb-browser screenshot /tmp/step5_done.png --tab <batch>    # → Read：确认下载中/完成提示
 ```
 
 ---
@@ -95,104 +97,53 @@ python3 -c "import os,subprocess; d=r'D:\下载'; f=max([x for x in os.listdir(d
 # Mac
 python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"
 
-sleep 4
+sleep 2   # 只等 2s，②的 grab_window 会检测对话框是否出现，没出现就再等重试
 ```
 
-### ② 把研学窗口带到前台 + 全屏截图（Windows）
+### ② 用脚本抓研学窗口区域（只读这块小图，速度快很多）
 
 ```bash
-python3 -c "
-import ctypes, time
-from ctypes import wintypes
-from PIL import ImageGrab
-user32 = ctypes.windll.user32
-# 找研学窗口（用 Unicode 标题，避免中文/进程名编码问题）
-target=[]
-@ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-def cb(h,l):
-    n=user32.GetWindowTextLengthW(h)
-    if n:
-        b=ctypes.create_unicode_buffer(n+1); user32.GetWindowTextW(h,b,n+1)
-        if user32.IsWindowVisible(h) and '研学' in b.value: target.append((h,b.value))
-    return True
-user32.EnumWindows(cb,0)
-hwnd=target[0][0]
-user32.ShowWindow(hwnd,9)      # 最小化则恢复
-time.sleep(0.4)
-user32.SetForegroundWindow(hwnd)
-time.sleep(0.6)
-img=ImageGrab.grab(all_screens=True)   # 抓完整虚拟桌面（含扩展屏）
-img.save('D:/exue_full.png')
-print('size=', img.size)
-"
+python3 scripts/grab_window.py D:/exue_full.png
+# 输出 "<left> <top> <w> <h>"（研学窗口的物理屏幕坐标），记下 LW=left、LT=top
 ```
-
-> 关键：必须用 `ImageGrab.grab(all_screens=True)` 抓**完整虚拟桌面**。用户可能拓展了屏幕，研学窗口会弹在第二块屏上（坐标超出主屏宽）；`pyautogui.screenshot()` 只抓主屏，会漏掉扩展屏上的窗口。
-> 点击**不要用 `pyautogui.click`**：`pyautogui.size()` 只报主屏，点不到扩展屏坐标（实测点在 x>主屏宽 时无效）。**用 ctypes `SetCursorPos`+`mouse_event` 送物理屏幕坐标**，能跨扩展屏。
-> 从 `exue_full.png`（虚拟桌面图）读取的像素坐标 = SetCursorPos 的物理坐标（100% DPI 下 1:1，无需换算）。
+> 只抓**窗口区域**（约 1000×1100，而非整块 4480×1600 虚拟桌面）——少读几兆像素，Read 更快更省。用 Read 打开 `D:/exue_full.png` 看清内容。
+> 多屏要点：窗口可能弹在第二块屏（`LW` 可能 > 主屏宽 2560）。脚本用 `all_screens` 抓取，能正确取到；别以为 `LW` 超宽就是错了。
+> 若 Read 后看到的**不是"导入题录"对话框**（还是搜索页/主界面），说明 es6 还没被加工成弹窗：等 2 秒后重跑本步。
 
 ### ③ 定位"导入并获取全文"按钮
 
-**Read `D:/exue_full.png`**，在图上找到"导入并获取全文"按钮，记下它的**物理屏幕坐标** `(bx, by)`。
-> 多屏注意：如果窗口在第二块屏，`bx` 会比主屏宽度大（如 2560 宽主屏 + 按钮在扩展屏 → `bx`≈3500）。这是正常的，直接用它点击即可。
+**Read `D:/exue_full.png`**（仅窗口区域），在图上找到"导入并获取全文"按钮，记它在**这张作物图里的坐标** `(cx, cy)`。
+> 换算成物理屏幕坐标：**`bx = LW + cx`，`by = LT + cy`**（用②打印的 LW/LT 偏移）。
+> 多屏注意：如果窗口在第二块屏，`bx` 会比主屏宽度大（如 ≈3500），这是正常的，直接用于点击。
+> 点击仍用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标——`pyautogui.click` 只覆盖主屏，点不到扩展屏。
 
 ### ④ 点击 + 截图验证（自校正闭环）
 
 ```bash
+REF=$(date +%s)   # 记录导入开始时间，供第7步轮询"新落库PDF"用
 python3 -c "import ctypes,time; u=ctypes.windll.user32; u.SetCursorPos(bx,by); time.sleep(0.3); u.mouse_event(2,0,0,0,0); u.mouse_event(4,0,0,0,0)"
-python3 -c "from PIL import ImageGrab; ImageGrab.grab(all_screens=True).save('D:/exue_after.png'); print('saved')"
+python3 scripts/grab_window.py D:/exue_after.png
 # → Read D:/exue_after.png：确认按钮被点中（对话框关闭/出现"正在获取全文"提示/无弹窗拦截）。
-#   若没点中：从第二张图看当前按钮实际在哪，修正 (bx,by) 再点，最多重试 2-3 次。
+#   若没点中：从这张图看当前按钮实际在哪，修正 (bx,by) 再点，最多重试 2-3 次。
 ```
 
 **Mac**：同样思路，用全屏截图定位，点击用 `cliclick c:<bx> <by>` 或 `osascript -e 'tell application "System Events" to click at {<bx>,<by>}'`。截图用 `pyautogui.screenshot().save(...)`（Mac 无 DPI 缩放，且单屏）。
 
 ---
 
-## 第7步：等待 + 验证（截图 + 文件夹双保险）
+## 第7步：轮询验证（等新 PDF 落库，快）
 
-提示用户：
-> 已触发导入，正在后台下载。约30秒后告诉我"继续"。
-
-用户确认后：
+> 后台正在取全文。用 wait_papers.py 轮询，新 PDF 一到 N 篇就返回，**不用固定等 30s**（快则几秒返回，慢则有超时兜底）。
 
 ```bash
-# ① 文件夹硬核校验（跨平台，最可靠）
-python3 -c "
-import os, time; from datetime import datetime
-base = r'D:\E-StudyData\15760463670\Literature'
-cutoff = time.time() - 3600  # 1小时内修改过的
-for d in os.listdir(base):
-    full = os.path.join(base, d)
-    if os.path.isdir(full):
-        mtime = os.path.getmtime(full)
-        if mtime > cutoff:
-            pdfs = [f for f in os.listdir(full) if f.endswith('.pdf')]
-            fmtime = datetime.fromtimestamp(mtime).strftime('%H:%M:%S')
-            print(f'{fmtime} | {d[:60]}: {len(pdfs)}篇')
-            for p in pdfs[-5:]:
-                print(f'  - {p[:70]}')
-"
+# ① 轮询等新 PDF 落库（ref 用第6步④记录的 REF；N=预期篇数；默认等120s）
+python3 scripts/wait_papers.py "$REF" <N篇数> 120
+# 输出 OK N篇 即全部到位；TIMEOUT 说明有下载失败/未收录，人工查看
 ```
 
 ```bash
 # ② 截图确认研学界面已显示新入库文献（双保险，含扩展屏）
-python3 -c "
-import ctypes, time
-from ctypes import wintypes
-from PIL import ImageGrab
-user32=ctypes.windll.user32
-target=[]
-@ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-def cb(h,l):
-    n=user32.GetWindowTextLengthW(h)
-    if n:
-        b=ctypes.create_unicode_buffer(n+1); user32.GetWindowTextW(h,b,n+1)
-        if user32.IsWindowVisible(h) and '研学' in b.value: target.append((h,b.value))
-    return True
-user32.EnumWindows(cb,0)
-user32.SetForegroundWindow(target[0][0]); time.sleep(0.5)
-ImageGrab.grab(all_screens=True).save('D:/exue_library.png'); print('saved')"
+python3 scripts/grab_window.py D:/exue_library.png
 # → Read D:/exue_library.png：列表里应能看到刚下载的 PDF / 无异常弹窗
 ```
 
@@ -201,7 +152,7 @@ ImageGrab.grab(all_screens=True).save('D:/exue_library.png'); print('saved')"
 ## 坐标与截图要点
 
 - **浏览器内**：一律用 `snap` 的 ref 点击，不手动算浏览器内坐标（浏览器页面有缩放/DPI，ref 才是准的）。
-- **原生窗口**：`ImageGrab.grab(all_screens=True)` 抓虚拟桌面 → 图上定位 → **ctypes `SetCursorPos`+`mouse_event`** 送物理坐标点击。别用 `pyautogui.click`（只覆盖主屏，点不到扩展屏）。
+- **原生窗口**：`scripts/grab_window.py` 只抓窗口区域（小图快）→ 图上定位 → 按钮物理坐标 = 窗口偏移(LW/LT) + 图内坐标 → **ctypes `SetCursorPos`+`mouse_event`** 送物理坐标点击。别用 `pyautogui.click`（只覆盖主屏，点不到扩展屏）。
 - **自校正闭环**：任何一次点击后都要截图确认；没点中就根据新图修正重试，而不是死守第一次的坐标。
 - **多屏坐标**：`bx,by` 是整块虚拟桌面的物理坐标，可能大于主屏宽度（如主屏2560+扩展屏 → 目标在扩展屏 `bx≈3500`）。直接用，不要按主屏裁剪或取模。
 - 截图路径统一放临时目录（Windows `D:\\`，Mac `~`），大小写/中文路径注意转义。

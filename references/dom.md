@@ -56,10 +56,10 @@ bb-browser tab | grep "manage/batch"
 ```bash
 bb-browser snap -i -c --tab <batch> | grep "批量下载"
 # 确认 "批量下载已选 N篇 文献"
+REF=$(stat -c %Y /d/下载/*.es6 2>/dev/null | sort -n | tail -1)
 bb-browser click @<ref> --tab <batch>
-sleep 3
-
-# 确认 es6 已落地
+# 等新 es6 落地（替代固定 sleep 3）
+bash scripts/wait_es6.sh "$REF" || echo "没等到新es6，用 ls 兜底"
 ls -lt /d/下载/ | head -1
 ```
 
@@ -79,7 +79,7 @@ python3 -c "import os,subprocess; d=r'D:\下载'; f=max([x for x in os.listdir(d
 # Mac
 python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"
 
-sleep 4
+sleep 2   # 只等2s，随后点坐标导入；多屏用 ctypes 点击（见下）
 ```
 
 ### ② 点击"导入并获取全文"
@@ -87,6 +87,7 @@ sleep 4
 **Windows**（pywinauto + ctypes）：
 
 ```bash
+REF=$(date +%s)   # 记录导入开始时间，供第7步轮询
 python3 -c "
 import time, ctypes, subprocess, re
 from pywinauto.mouse import click
@@ -125,29 +126,14 @@ osascript -e 'tell application "System Events" to click at {<x>,<y>}'
 
 ---
 
-## 第7步：等待 + 验证
+## 第7步：轮询验证（等新 PDF 落库，快）
 
-提示用户：
-> 已触发导入，正在后台下载。约30秒后告诉我"继续"。
-
-用户确认后验证：
+后台正在取全文。用 `scripts/wait_papers.py` 轮询，新 PDF 一到 N 篇就返回，不用固定等 30s。
 
 ```bash
-python3 -c "
-import os, time; from datetime import datetime
-base = r'D:\E-StudyData\15760463670\Literature'
-cutoff = time.time() - 3600  # 1小时内修改过的
-for d in os.listdir(base):
-    full = os.path.join(base, d)
-    if os.path.isdir(full):
-        mtime = os.path.getmtime(full)
-        if mtime > cutoff:
-            pdfs = [f for f in os.listdir(full) if f.endswith('.pdf')]
-            fmtime = datetime.fromtimestamp(mtime).strftime('%H:%M:%S')
-            print(f'{fmtime} | {d[:60]}: {len(pdfs)}篇')
-            for p in pdfs[-5:]:
-                print(f'  - {p[:70]}')
-"
+# ref 用「点击导入前」记录的 REF（date +%s）；N=预期篇数；默认等120s
+python3 scripts/wait_papers.py "$REF" <N篇数> 120
+# 输出 OK N篇 即全部到位；TIMEOUT 说明有下载失败/未收录，人工查看
 ```
 
 ---

@@ -112,6 +112,19 @@ bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-l
 3. **用 CNKI 自己的计数做判据**：选完核对 `#selectCount` == 预期篇数，**不是**看 checkbox 的 `.checked`。两者不一致=有残留，先清除重选。
 4. 判定"勾选是否生效"的权威信号 = 批量页 `批量下载已选 N篇`，N 必须等于预期。
 
+## 提速要点（用脚本等状态，别盲等）
+
+> 整个流程的耗时大头是**固定 sleep + 反复读大图**，可用脚本改成"等状态出现再走"，快且稳。scripts/ 下四个脚本：
+
+| 脚本 | 作用（替代什么） |
+|------|----------------|
+| `scripts/wait.sh` | 轮询执行一段 JS，直到含期望子串（替代 `sleep 3/4` 盲等搜索/过滤/排序/导出） |
+| `scripts/wait_es6.sh` | 等到下载目录出现**新** es6（替代 `sleep 6` 等下载） |
+| `scripts/wait_papers.py` | 轮询研学库，直到新落库 PDF 达到 N 篇（替代"等30秒"盲等验证） |
+| `scripts/grab_window.py` | 只抓研学**窗口区域**小图（替代抓整块 4480×1600 虚拟桌面再裁剪多次） |
+
+**原则**：任何"等一会儿"都用脚本轮询到状态出现，别再写死 `sleep N`。网络快就早返回，慢有超时兜底。
+
 ## 关键提示（两类策略共用的易错点）
 
 1. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
@@ -121,4 +134,4 @@ bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-l
 5. **中途遇到验证码**：暂停提示用户手动完成
 6. **第6步执行期间用户手不要碰鼠标**：模拟点击会被物理鼠标操作打断
 7. **打开 es6 用研学 exe 的 `-o` 参数**：`"C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe" -o "D:\下载\<es6>"`，别只靠 `os.startfile`（研学已在跑时不弹窗）。
-8. **多屏环境**：研学窗口可能弹在第二块屏（窗口坐标可能超过主屏宽）。截图必须用 `ImageGrab.grab(allScreens=True)` 或 `pyautogui.screenshot(allScreens=True)` 抓完整虚拟桌面；**点击原生窗口用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标**，`pyautogui.click` 只覆盖主屏点不到扩展屏。
+8. **多屏环境**：研学窗口可能弹在第二块屏（窗口坐标可能超过主屏宽）。抓屏用 `scripts/grab_window.py`（只抓窗口区域）；**点击原生窗口用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标**，`pyautogui.click` 只覆盖主屏点不到扩展屏。
