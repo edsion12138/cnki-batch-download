@@ -83,51 +83,33 @@ ls -lt /d/下载/ | head -1
 
 ---
 
-## 第6步：打开 es6 + 研学导入（★核心：用截图替代硬编码坐标）
+## 第6步：打开 es6 + 导入（先定 手动 还是 自动）
 
-> **此步执行期间，用户手不要碰鼠标。** 模拟点击会被物理鼠标操作打断。
-> 这一步**不再用**策略B的 `(window.left+533, window.top+1241)` 硬编码坐标，改为**全屏截图 → 定位按钮 → 点击 → 验证**，跨机/DPI 不再需要手动校准。
+> **一开始就问清导入方式**（`--import manual|auto`，默认 `manual`）。这步是唯一需要动原生窗口的环节，方式选错会拖很久。
 
-### ① 打开最新 es6
+### ①② 先决定：手动 还是 自动
+- **手动（默认）**：打开 es6 → 弹"导入题录"窗 → **让用户手动点"导入并获取全文"**。最稳，交互场景一律用它。
+- **自动**：**必须让用户提前把知网研学放到主屏**（弹窗位置才稳定、坐标可一次校准），才走 `scripts/click_import.py`。
+
+> **弹窗时机**：只有**打开 es6 文件**才弹"导入题录"窗；且它可能**最小化到任务栏**（点了任务栏"知网研学"图标才显示）。所以开 es6 后若屏幕上看不到弹窗，先让用户点一下任务栏的研学图标。
+
+### ③ 打开最新 es6（用研学 exe 的 -o）
 
 ```bash
-# Windows（用研学 exe 的 -o 打开，研学已在跑时才不会静默不弹窗）
+# Windows
 python3 -c "import os,subprocess; d=r'D:\下载'; f=max([x for x in os.listdir(d) if x.endswith('.es6')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run([r'C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe', '-o', os.path.join(d,f)])"
-
 # Mac
 python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"
-
-sleep 2   # 只等 2s，②的 grab_window 会检测对话框是否出现，没出现就再等重试
+sleep 3   # 等研学把 es6 加工成"导入题录"对话框
 ```
 
-### ② 用脚本抓研学窗口区域（只读这块小图，速度快很多）
+### ④ 执行导入
+- **手动**：提示用户"研学已导入题录窗（含 N 篇），请点'导入并获取全文'，好了告诉我"。点完自动开始取全文。
+- **自动**：`python3 scripts/click_import.py`（脚本找研学主窗→按校准偏移 ctypes 点击）。若点不准，先跑一次校准（见脚本末尾注释），或在主屏稳定弹窗后把默认 RELX/RELY 改成校准值。
 
-```bash
-python3 scripts/grab_window.py D:/exue_full.png
-# 输出 "<left> <top> <w> <h>"（研学窗口的物理屏幕坐标），记下 LW=left、LT=top
-```
-> 只抓**窗口区域**（约 1000×1100，而非整块 4480×1600 虚拟桌面）——少读几兆像素，Read 更快更省。用 Read 打开 `D:/exue_full.png` 看清内容。
-> 多屏要点：窗口可能弹在第二块屏（`LW` 可能 > 主屏宽 2560）。脚本用 `all_screens` 抓取，能正确取到；别以为 `LW` 超宽就是错了。
-> 若 Read 后看到的**不是"导入题录"对话框**（还是搜索页/主界面），说明 es6 还没被加工成弹窗：等 2 秒后重跑本步。
+点完即后台取全文，进入第7步轮询验证。**REF = `date +%s` 记录于点击前**。
 
-### ③ 定位"导入并获取全文"按钮
-
-**Read `D:/exue_full.png`**（仅窗口区域），在图上找到"导入并获取全文"按钮，记它在**这张作物图里的坐标** `(cx, cy)`。
-> 换算成物理屏幕坐标：**`bx = LW + cx`，`by = LT + cy`**（用②打印的 LW/LT 偏移）。
-> 多屏注意：如果窗口在第二块屏，`bx` 会比主屏宽度大（如 ≈3500），这是正常的，直接用于点击。
-> 点击仍用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标——`pyautogui.click` 只覆盖主屏，点不到扩展屏。
-
-### ④ 点击 + 截图验证（自校正闭环）
-
-```bash
-REF=$(date +%s)   # 记录导入开始时间，供第7步轮询"新落库PDF"用
-python3 -c "import ctypes,time; u=ctypes.windll.user32; u.SetCursorPos(bx,by); time.sleep(0.3); u.mouse_event(2,0,0,0,0); u.mouse_event(4,0,0,0,0)"
-python3 scripts/grab_window.py D:/exue_after.png
-# → Read D:/exue_after.png：确认按钮被点中（对话框关闭/出现"正在获取全文"提示/无弹窗拦截）。
-#   若没点中：从这张图看当前按钮实际在哪，修正 (bx,by) 再点，最多重试 2-3 次。
-```
-
-**Mac**：同样思路，用全屏截图定位，点击用 `cliclick c:<bx> <by>` 或 `osascript -e 'tell application "System Events" to click at {<bx>,<by>}'`。截图用 `pyautogui.screenshot().save(...)`（Mac 无 DPI 缩放，且单屏）。
+> **Mac**：无扩展屏问题，手动/自动皆可；自动用 `cliclick c:<bx> <by>` 或 `osascript ... click at {<bx>,<by>}`（坐标用 `pyautogui.screenshot()` 定位）。
 
 ---
 

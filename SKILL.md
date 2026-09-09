@@ -1,7 +1,7 @@
 ---
 name: cnki-batch-download
 description: 批量下载知网文献并导入知网研学。运行时会根据模型视觉能力自动选策略——多模态模型走截图视觉策略（截图确认状态、精准定位导入按钮），单模态模型走DOM策略。支持关键词检索、高级检索（CSSCI/北大核心）、按被引排序。使用bb-browser操控浏览器 + pywinauto/pyautogui 桌面自动化。
-argument-hint: "[检索主题] [筛选条件] [下载数量] [--strategy vision|dom]"
+argument-hint: "[检索主题] [筛选条件] [下载数量] [--strategy vision|dom] [--import manual|auto]"
 ---
 
 # CNKI 批量下载 + 导入研学
@@ -49,10 +49,13 @@ bb-browser screenshot /tmp/capability.png --tab <tab>
 |------|---------|-----|
 | 搜索→导出→es6落地 | bb-browser（跨平台） | bb-browser（跨平台） |
 | 打开es6 | 研学 exe `-o`（`os.startfile` 仅兜底） | `open` 命令 |
-| 点击"导入并获取全文" | 视觉: `ImageGrab(allScreens)` 截图 + `ctypes SetCursorPos` 点击<br>DOM: `pywinauto`+ctypes | `cliclick` / `osascript` |
-| 验证PDF入库 | Python（跨平台），按标题核验 | Python（跨平台） |
+| 点击"导入并获取全文" | 默认**用户手动点**；`--import auto` 则自动点（须研学在主屏） | 用户手动 / `--import auto` |
+| 验证PDF入库 | `scripts/wait_papers.py` 轮询（跨平台） | 同上 |
 
-**视觉模式** 原生窗口用 `ImageGrab.grab(allScreens=True)` 抓全虚拟桌面，`ctypes SetCursorPos`+`mouse_event` 送物理坐标（**能跨扩展屏**；`pyautogui.click` 只覆盖主屏）。**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标。二者互为后备，详见各自 reference。
+**导入方式先用 `--import` 说清**（默认 `manual`）：
+- **`manual`（默认）**：打开 es6 弹出"导入题录"对话框后，让用户手动点"导入并获取全文"。变数最少、最稳。
+- **`auto`**：**必须提前让用户把知网研学放到主屏**（弹窗位置才稳定、坐标可一次校准），然后用 `scripts/click_import.py` 按对话框坐标自动点击。只要研学在主屏，弹窗每次在固定位置，坐标可靠，无需每次截图定位。
+**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标兜底。详见各自 reference。
 
 ## 通用步骤（无论哪个策略都要走）
 
