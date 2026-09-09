@@ -1,21 +1,42 @@
 ---
 name: cnki-batch-download
-description: 批量下载知网文献并导入知网研学。支持关键词检索、高级检索（CSSCI/北大核心）、按被引排序。使用bb-browser操控浏览器（勾选→导出研学→es6落地） + pywinauto自动导入。
-argument-hint: "[检索主题] [筛选条件] [下载数量]"
+description: 批量下载知网文献并导入知网研学。运行时会根据模型视觉能力自动选策略——多模态模型走截图视觉策略（截图确认状态、精准定位导入按钮），单模态模型走DOM策略。支持关键词检索、高级检索（CSSCI/北大核心）、按被引排序。使用bb-browser操控浏览器 + pywinauto/pyautogui 桌面自动化。
+argument-hint: "[检索主题] [筛选条件] [下载数量] [--strategy vision|dom]"
 ---
 
 # CNKI 批量下载 + 导入研学
 
 ## 核心流程
 
-搜索 → 清除+验证 → 排序 → 重新勾选 → 导出研学 → 下载es6 → 打开→导入→等待→验证入库
+策略选择 → 搜索 → 清除+验证 → 排序 → 重新勾选 → 导出研学 → 下载es6 → 打开→导入→验证入库
+
+## 运行策略选择（每次运行第一件事）
+
+**先确定本会话用哪套策略**。这与当前模型的视觉能力强相关——有视觉能力的模型能通过截图看清屏幕，做事更精准；没有的就只能靠 DOM 判断。
+
+判定方法（运行时自测）：
+
+```bash
+# 浏览器已打开且停留在知网搜索页后，截一张当前页
+bb-browser screenshot /tmp/capability.png --tab <tab>
+```
+
+然后用 Read 工具打开 `/tmp/capability.png`，看自己**是否真的能看到页面内容**：
+
+- **能看到**（按钮、文字、结果表格都清晰）→ 本会话有视觉能力 → 走 **策略A · 视觉模式** → `references/vision.md`
+- **只能看到空白 / 尺寸占位 / 完全感知不到画面** → 本会话无视觉能力 → 走 **策略B · DOM模式** → `references/dom.md`
+
+手动覆盖：如果自测有歧义想强制某套，在参数里传 `--strategy vision` 或 `--strategy dom`，跳过自测直接走对应策略。
+
+> 不要凭"我猜这个模型会不会看图"来判断。**真的截一张，真的读进去**，以你实际看到的东西为准。这是整个流程最前面的一步，选错了后面全部白忙。
 
 ## 使用前必读
 
 ### 前置条件
 1. **安装知网研学桌面端**：[官网下载](https://estudy.cnki.net/)，Windows/Mac 均支持。安装后登录机构账号
-2. **浏览器已登录知网**：在 Chrome 中提前登录一次（机构登录或 IP 登录）
-3. **创建目标专题**：在研学中新建一个专题（如"文献下载"），论文导入时自动进入最近使用的专题
+2. **设置优先下载 PDF**：研学 → 设置 → 知网获取全文设置 → 其他设置 → 勾选"默认优先获取PDF格式文献"。否则下载的可能全是不便后续处理的 CAJ 文件
+3. **浏览器已登录知网**：在 Chrome 中提前登录一次（机构登录或 IP 登录）
+4. **创建目标专题**：在研学中新建一个专题（如"文献下载"），论文导入时自动进入最近使用的专题
 
 ### 每日下载额度
 - 知网批量下载每日上限 **100 篇**，与校园网 IP 绑定
@@ -28,22 +49,12 @@ argument-hint: "[检索主题] [筛选条件] [下载数量]"
 |------|---------|-----|
 | 搜索→导出→es6落地 | bb-browser（跨平台） | bb-browser（跨平台） |
 | 打开es6 | `os.startfile` | `open` 命令 |
-| 点击"导入并获取全文" | pywinauto + ctypes | `osascript`（AppleScript）或 `cliclick` |
+| 点击"导入并获取全文" | 视觉: `pyautogui` 全屏截图+定位<br>DOM: `pywinauto`+ctypes | `cliclick` / `osascript` |
 | 验证PDF入库 | Python（跨平台） | Python（跨平台） |
 
-Mac 导入用的坐标和工具链不同，详见第6步的分支代码。
+**视觉模式** 原生窗口用 `pyautogui`（全屏截图与点击共享坐标系，免 DPI 换算）；**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标。二者互为后备，详见各自 reference。
 
-## 关键规则（每次执行前过一遍）
-
-0. **首次自检**：`bb-browser`、`pywinauto`、`python3` 可用
-1. 登录检查用 `!innerText.includes('机构登录')`
-2. 清除后验证 checked=0；排序后等 3s 重新 `querySelectorAll`
-3. **CSSCI 每次搜索后单独验证**：高级检索页导航会重置表单，搜索前必须单独 `querySelector('#CSSCI').click()`
-4. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
-5. **JS eval 只用 function 表达式**：禁用箭头函数 + var + return 混用，避免 `SyntaxError`
-6. **导出前必须关旧 batch tab**：`bb-browser tab | grep batch` 找出来逐个 close
-7. **pywinauto 用预写脚本执行**：不要 inline 写，避免 auto mode 拦截
-8. 中途遇到验证码：暂停提示用户手动完成
+## 通用步骤（无论哪个策略都要走）
 
 ---
 
@@ -87,212 +98,16 @@ bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-l
 
 ---
 
-## 第3步：清除（验证！）+ 排序 + 重新勾选
+## 进入对应策略（第3步起的差异部分）
 
-**清除不依赖页面上的"清除"按钮**（新/旧版知网页面DOM不同，XPath不可靠）。
-直接通过 JS 强制取消所有 checked，再纯文本匹配兜底：
+- **模型有视觉能力** → 读 `references/vision.md` 走 **策略A**（截图确认 + 精准定位导入按钮）
+- **模型无视觉能力** → 读 `references/dom.md` 走 **策略B**（DOM 判断 + ref 点击 + 硬编码坐标兜底）
 
-```bash
-# ① 强制清除（纯 JS，不依赖页面DOM按钮）
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem:checked');for(var i=cbs.length-1;i>=0;i--){cbs[i].click();}var n=0;document.querySelectorAll('.result-table-list tbody input.cbItem').forEach(function(c){if(c.checked)n++;});if(n>0){var all=document.querySelectorAll('.result-table-list tbody input.cbItem');all.forEach(function(c){if(c.checked)c.click();});var m=0;all.forEach(function(c){if(c.checked)m++;});return'retry:'+m;}return 0;})()" --tab <tab>
-# 必须返回 0，否则再执行一次
+## 关键提示（两类策略共用的易错点）
 
-# ② 排序（可选）
-bb-browser eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()" --tab <tab>
-sleep 3  # DOM 全作废
-
-# ③ 重新查询 + 勾选
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];indices.forEach(function(i){cbs[i].click();});return{ok:[cbs[0].checked,cbs[1].checked,cbs[2].checked],titles:[document.querySelectorAll('.result-table-list tbody tr')[0]?.querySelector('td.name a.fz14')?.innerText?.substring(0,30)]};})()" --tab <tab>
-# 确认 ok=[true,true,true]
-```
-
-**关键：清除不靠"清除"按钮，直接走 JS uncheck。** 这在新版和旧版知网页面都有效。
-
----
-
-## 第4步：导出到研学
-
-```bash
-# snap 找"批量操作" ref
-bb-browser snap -i -c --tab <tab> | grep "批量操作"
-
-# 原生点击打开下拉（等待 1.5s，CNKI 菜单有过渡动画）
-bb-browser click @<ref> --tab <tab>
-sleep 1.5
-
-# jQuery 触发"下载到研学"（CNKI 自己创建 batch tab）
-bb-browser eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')" --tab <tab>
-sleep 3
-
-# 确认新 batch tab
-bb-browser tab | grep "manage/batch"
-```
-
----
-
-## 第5步：批量下载
-
-```bash
-bb-browser snap -i -c --tab <batch> | grep "批量下载"
-# 确认 "批量下载已选 N篇 文献"
-bb-browser click @<ref> --tab <batch>
-sleep 3
-
-# 确认 es6 已落地
-ls -lt /d/下载/ | head -1
-```
-
----
-
-## 第6步：打开 es6 + 研学导入
-
-> **此步执行期间，用户手不要碰鼠标。** 模拟点击会被物理鼠标操作打断。
-
-### ① 打开最新 es6（跨平台）
-
-```bash
-# Windows
-python3 -c "import os; d=r'D:\\下载'; f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); os.startfile(os.path.join(d,f))"
-
-# Mac
-python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"
-
-sleep 4
-```
-
-### ② 点击"导入并获取全文"
-
-**Windows**（pywinauto + ctypes）：
-
-```bash
-python3 -c "
-import time, ctypes, subprocess, re
-from pywinauto.mouse import click
-out=subprocess.check_output(['powershell','-Command','Get-Process -Name *知网* | Where MainWindowHandle | Select -First 1 MainWindowHandle'],shell=True).decode()
-hwnd=int(re.findall(r'\d+',out)[0])
-ctypes.windll.user32.ShowWindow(hwnd,9)
-time.sleep(0.3)
-ctypes.windll.user32.SetForegroundWindow(hwnd)
-time.sleep(0.5)
-class RECT(ctypes.Structure):
-    _fields_=[('left',ctypes.c_long),('top',ctypes.c_long),('right',ctypes.c_long),('bottom',ctypes.c_long)]
-r=RECT(); ctypes.windll.user32.GetWindowRect(hwnd,ctypes.byref(r))
-w=r.right-r.left; h=r.bottom-r.top
-if w<100 or h<100:
-    print(f'窗口异常({w}x{h})')
-else:
-    click(coords=(r.left+533,r.top+1241))
-    print(f'已点击 ({r.left+533},{r.top+1241})')
-"
-```
-
-**Mac**（osascript AppleScript）：
-
-```bash
-# 方法A：cliclick（需 brew install cliclick）
-cliclick c:<x> <y>
-
-# 方法B：osascript（系统自带，推荐）
-osascript -e 'tell application "知网研学" to activate'
-osascript -e 'tell application "System Events" to click at {<x>,<y>}'
-```
-
-> Mac 坐标需预先校准：用户悬停鼠标到按钮上，终端执行 `python3 -c "import pyautogui; print(pyautogui.position())"` 获取绝对坐标。
-
-> Windows 相对坐标 (533, 1241) 经多次验证稳定。窗口最小化时会先恢复再点击。
-
----
-
-## 第7步：等待 + 验证
-
-提示用户：
-> 已触发导入，正在后台下载。约30秒后告诉我"继续"。
-
-用户确认后验证：
-
-```bash
-python3 -c "
-import os, time; from datetime import datetime
-base = r'D:\\E-StudyData\\15760463670\\Literature'
-cutoff = time.time() - 3600  # 1小时内修改过的
-for d in os.listdir(base):
-    full = os.path.join(base, d)
-    if os.path.isdir(full):
-        mtime = os.path.getmtime(full)
-        if mtime > cutoff:
-            pdfs = [f for f in os.listdir(full) if f.endswith('.pdf')]
-            fmtime = datetime.fromtimestamp(mtime).strftime('%H:%M:%S')
-            print(f'{fmtime} | {d[:60]}: {len(pdfs)}篇')
-            for p in pdfs[-5:]:
-                print(f'  - {p[:70]}')
-"
-```
-
----
-
-## DOM + 路径参考
-
-| 元素 | 选择器/值 |
-|------|---------|
-| 搜索框 | `input.search-input` |
-| 搜索按钮 | `input.search-btn` |
-| 结果行/复选框/标题 | `.result-table-list tbody tr` / `input.cbItem` / `td.name a.fz14` |
-| 登录检查 | `!document.body.innerText.includes('机构登录')` |
-| 清除/被引排序 | XPath: `//*[text()='清除']` / `//*[text()='被引']` |
-| 批量操作/下载到研学 | XPath: `//*[text()='批量操作']` / `//*[text()='下载到研学']` |
-| 批量下载按钮 | `#btn-download-all` |
-| es6目录 | `D:\下载\`（取浏览器默认下载路径） |
-| 研学库根目录 | `D:\E-StudyData\<用户ID>\Literature\`（研学→设置→文献库位置） |
-| 导入按钮相对坐标 | `(window.left+533, window.top+1241)` — 需在新电脑上重校准 |
-
-## 故障速查
-
-| 症状 | 原因 | 解决 |
-|------|------|------|
-| 排序后勾选全 false | DOM 过期 | 等3s后重新 querySelectorAll |
-| 下载含旧文献 | 清除未生效 | 清除后验证 checked=0 |
-| 导出后无 batch tab | 旧 tab 占用了窗口名 | 关闭所有 manage/batch tab，重新导出 |
-| batch 页显示 0 篇 | jQuery trigger 未触发跳转 | 确认原生 click 打开了菜单；重试导出 |
-| jQuery trigger 不生效 | 菜单未用原生点击打开 | snap → click @ref → jQuery trigger |
-| 登录误判"未登录" | 检查字符串错误 | 用 `includes('机构登录')` |
-| 导入坐标不准 | 窗口位置/DPI变了 | 在新电脑上重校准相对坐标 |
-| 研学PID找不到 | 进程名可能是乱码 | `Get-Process -Name '*知网*'` + MainWindowHandle过滤 |
-| 遇到验证码 | CNKI高频操作触发 | 提示用户手动完成验证码 |
-| 验证脚本没输出 | 根目录mtime太旧 | 改用 `time.time() - 3600` 过滤1小时内修改的 |
-| 勾选后批量页0篇 | jQuery trigger未跳转，疑似弹窗被拦截 | 先关闭旧batch tab，再重试导出 |
-| 下拉菜单展开后找不到下载到研学 | 等待时间不够 | `sleep 1` 改为 `sleep 1.5` |
-
-## 迁移到其他电脑的适配清单
-
-本 skill 深度绑定了当前电脑环境。迁移到新电脑时，以下项需要逐一适配：
-
-### 必须用户手动完成的
-| 项目 | 说明 | 适配方法 |
-|------|------|---------|
-| **安装知网研学** | 桌面软件，Windows/Mac 均有 | [官网](https://estudy.cnki.net/) 下载，安装后登录机构账号 |
-| **研学中创建专题** | 导入时论文进入"最近使用的专题"，需事先存在 | 提醒用户先在研学中创建目标专题 |
-| **浏览器登录知网** | CNKI 机构/个人登录态 | 首次使用需手动登录一次 |
-| **注意下载额度** | 每日 100 篇，校园网 IP 绑定 | 校外/VPN 可能无法批量下载；超出限额当天不可再用 |
-
-### 需要修改硬编码路径的
-| 项目 | 当前值 | 如何获取 |
-|------|--------|---------|
-| es6下载目录 | `D:\下载\` | 取用户浏览器默认下载路径，或通过 `chrome://downloads/` 获取 |
-| 研学库根目录 | `D:\E-StudyData\15760463670\Literature\` | 研学→设置→文献库位置，不同用户ID不同 |
-| Python/工具链 | Windows: `python3`, `bb-browser`, `pywinauto`<br>Mac: `python3`, `bb-browser`, `pyautogui` + `cliclick`(可选) | 需一并安装 |
-| es6下载目录 | Windows: `D:\下载\` / Mac: `~/Downloads/` | 取浏览器默认下载路径 |
-
-### 可能需要重新校准的
-| 项目 | 风险 | 校准方法 |
-|------|------|---------|
-| **导入按钮坐标** | **高** | **Windows**：用户悬停→ `pyautogui.position()` → 减窗口左上角。<br>**Mac**：`osascript` + `cliclick`，坐标用 `pyautogui.position()` 获取。 |
-| 研学窗口类名 `CSimpleFrame` | 低 — 研学版本升级可能改类名 | `pywinauto` 扫描所有窗口，找 title 含"知网研学"的 |
-| bb-browser 登录检测 | 中 — 不同机构登录后页面元素可能不同 | 用 `snap` 查看登录后页面特征文字 |
-
-### 不需要改的
-| 项目 | 原因 |
-|------|------|
-| CNKI DOM 选择器 | 知网页面结构全国统一 |
-| JS 搜索/勾选/清除逻辑 | 纯 DOM 操作，与电脑环境无关 |
-| jQuery 导出 trigger | CNKI 本身加载了 jQuery，不依赖本地环境 |
-| 批量下载按钮 `#btn-download-all` | CNKI 固定 ID |
+1. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
+2. **JS eval 只用 function 表达式**：禁用箭头函数 + var + return 混用，避免 `SyntaxError`
+3. **导出前必须关旧 batch tab**：`bb-browser tab | grep batch` 找出来逐个 close
+4. **pywinauto 用预写脚本执行**：不要 inline 写，避免 auto mode 拦截
+5. **中途遇到验证码**：暂停提示用户手动完成
+6. **第6步执行期间用户手不要碰鼠标**：模拟点击会被物理鼠标操作打断

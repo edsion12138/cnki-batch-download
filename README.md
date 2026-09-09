@@ -7,8 +7,9 @@
 - 知网关键词检索 / 高级检索（CSSCI、北大核心过滤）
 - 按被引量排序，摘要预筛选
 - 浏览器自动化勾选 → 批量导出研学
-- 桌面自动化点击导入（Windows pywinauto / Mac AppleScript）
+- 桌面自动化点击导入（Windows pyautogui/pywinauto / Mac AppleScript）
 - 自动验证 PDF 入库
+- **按模型视觉能力自动选策略**：多模态走截图视觉策略（看屏确认+精准定位），单模态走 DOM 策略
 
 ## 安装
 
@@ -27,8 +28,23 @@ git clone https://github.com/edsion12138/cnki-batch-download.git ~/.claude/skill
 
 ### 依赖
 
-**Windows**：`python3`, `bb-browser`, `pywinauto`
+**Windows**：`python3`, `bb-browser`, `pywinauto`, `pyautogui`
 **Mac**：`python3`, `bb-browser`, `pyautogui`（可选 `cliclick`）
+
+> `pyautogui` 是视觉策略的刚需（桌面截图 + 精准点击）。只走 DOM 策略时可省。
+
+## 两种运行策略
+
+skill 每次运行先做一次运行时自测：截一张浏览器图，模型确认自己能否看清页面内容，据此自动进入对应策略（可用 `--strategy vision|dom` 强制覆盖）。
+
+| | 策略A · 视觉模式（多模态模型） | 策略B · DOM模式（单模态模型） |
+|---|---|---|
+| 判断状态 | 截图看屏确认 | JS 返回布尔/DOM 文本 |
+| 点击 | 浏览器用 ref；原生窗口用全屏截图定位+点击 | 浏览器/原生窗口用 ref + 硬编码坐标 |
+| 导入按钮 | 截图定位，免跨机校准 | 硬编码 `(left+533, top+1241)` 需校准 |
+| 适用 | 有视觉能力的模型（如 DeepSeek-V4-Flash-Vision-Exp） | 无视觉能力的模型 |
+
+策略细节见 `references/vision.md` 与 `references/dom.md`。
 
 ## 使用
 
@@ -43,4 +59,4 @@ git clone https://github.com/edsion12138/cnki-batch-download.git ~/.claude/skill
 | 步骤 | Windows | Mac |
 |------|---------|-----|
 | 搜索→es6 | bb-browser | bb-browser |
-| 导入研学 | pywinauto | osascript |
+| 导入研学 | 视觉: pyautogui 截图定位 / DOM: pywinauto | osascript / cliclick |
