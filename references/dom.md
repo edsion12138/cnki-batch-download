@@ -7,24 +7,27 @@
 
 ## 第3步：清除（验证！）+ 排序 + 重新勾选
 
-**清除不依赖页面上的"清除"按钮**（新/旧版知网页面DOM不同，XPath不可靠）。
-直接通过 JS 强制取消所有 checked，再纯文本匹配兜底：
+**清除必须先于勾选**，否则会混入残留已选（见 SKILL.md「勾选/导出铁律」）。用 `#selectCount` 旁的 `filenameClear()` 清成 0，再勾选；勾选用可靠事件链并核对 `#selectCount`：
 
 ```bash
-# ① 强制清除（纯 JS，不依赖页面DOM按钮）
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem:checked');for(var i=cbs.length-1;i>=0;i--){cbs[i].click();}var n=0;document.querySelectorAll('.result-table-list tbody input.cbItem').forEach(function(c){if(c.checked)n++;});if(n>0){var all=document.querySelectorAll('.result-table-list tbody input.cbItem');all.forEach(function(c){if(c.checked)c.click();});var m=0;all.forEach(function(c){if(c.checked)m++;});return'retry:'+m;}return 0;})()" --tab <tab>
-# 必须返回 0，否则再执行一次
+# ① 真正清除已选（用 CNKI 的 filenameClear，不是筛选栏"清除"）
+bb-browser eval "(function(){var a=document.querySelectorAll('a,#selectCount a');var clr=Array.from(document.querySelectorAll('a')).find(x=>/filenameClear/.test(x.getAttribute('href')||''));if(clr){clr.click();return 'clicked';}var el=document.querySelector('#selectCount');if(el){var p=el.closest('div');var a2=p&&p.querySelector('a');if(a2){a2.click();return 'clicked-parent';}}return 'none';})()" --tab <tab>
+sleep 1
+bb-browser eval "document.querySelector('#selectCount')?.innerText" --tab <tab>
+# 必须显示 0，否则再点一次清除
 
 # ② 排序（可选）
 bb-browser eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()" --tab <tab>
 sleep 3  # DOM 全作废
 
-# ③ 重新查询 + 勾选
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];indices.forEach(function(i){cbs[i].click();});return{ok:[cbs[0].checked,cbs[1].checked,cbs[2].checked],titles:[document.querySelectorAll('.result-table-list tbody tr')[0]?.querySelector('td.name a.fz14')?.innerText?.substring(0,30)]};})()" --tab <tab>
-# 确认 ok=[true,true,true]
+# ③ 重新勾选（可靠事件链：checked=false → dispatchEvent(click) → onclick()）
+bb-browser eval "(async function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];for(var k=0;k<indices.length;k++){var cb=cbs[indices[k]];if(!cb.checked){cb.checked=false;cb.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,120));if(typeof cb.onclick==='function')cb.onclick();}}return 'done';})()" --tab <tab>
+sleep 1
+bb-browser eval "document.querySelector('#selectCount')?.innerText" --tab <tab>
+# 核对 CNKI 自己的已选计数 == 预期篇数（不是只看 checkbox.checked）
 ```
 
-**关键：清除不靠"清除"按钮，直接走 JS uncheck。** 这在新版和旧版知网页面都有效。
+**关键：清空用 `#selectCount` 旁的 `filenameClear()`；勾选触发完整事件链；以 `#selectCount` 判据为准。**
 
 ---
 
@@ -70,7 +73,8 @@ ls -lt /d/下载/ | head -1
 
 ```bash
 # Windows
-python3 -c "import os; d=r'D:\下载'; f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); os.startfile(os.path.join(d,f))"
+python3 -c "import os,subprocess; d=r'D:\下载'; f=max([x for x in os.listdir(d) if x.endswith('.es6')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run([r'C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe', '-o', os.path.join(d,f)])"
+# ⚠️ 用研学 exe 的 -o 显式打开，别只靠 os.startfile（研学已在跑时不弹窗）。exe路径见下。
 
 # Mac
 python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"

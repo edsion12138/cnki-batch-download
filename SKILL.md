@@ -48,11 +48,11 @@ bb-browser screenshot /tmp/capability.png --tab <tab>
 | 步骤 | Windows | Mac |
 |------|---------|-----|
 | 搜索→导出→es6落地 | bb-browser（跨平台） | bb-browser（跨平台） |
-| 打开es6 | `os.startfile` | `open` 命令 |
-| 点击"导入并获取全文" | 视觉: `pyautogui` 全屏截图+定位<br>DOM: `pywinauto`+ctypes | `cliclick` / `osascript` |
-| 验证PDF入库 | Python（跨平台） | Python（跨平台） |
+| 打开es6 | 研学 exe `-o`（`os.startfile` 仅兜底） | `open` 命令 |
+| 点击"导入并获取全文" | 视觉: `ImageGrab(allScreens)` 截图 + `ctypes SetCursorPos` 点击<br>DOM: `pywinauto`+ctypes | `cliclick` / `osascript` |
+| 验证PDF入库 | Python（跨平台），按标题核验 | Python（跨平台） |
 
-**视觉模式** 原生窗口用 `pyautogui`（全屏截图与点击共享坐标系，免 DPI 换算）；**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标。二者互为后备，详见各自 reference。
+**视觉模式** 原生窗口用 `ImageGrab.grab(allScreens=True)` 抓全虚拟桌面，`ctypes SetCursorPos`+`mouse_event` 送物理坐标（**能跨扩展屏**；`pyautogui.click` 只覆盖主屏）。**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标。二者互为后备，详见各自 reference。
 
 ## 通用步骤（无论哪个策略都要走）
 
@@ -103,6 +103,15 @@ bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-l
 - **模型有视觉能力** → 读 `references/vision.md` 走 **策略A**（截图确认 + 精准定位导入按钮）
 - **模型无视觉能力** → 读 `references/dom.md` 走 **策略B**（DOM 判断 + ref 点击 + 硬编码坐标兜底）
 
+## 勾选/导出铁律（第3-5步，两类策略都用）
+
+> 这是从真实翻车里总结的，**比"用什么策略"更容易踩坑**。逐条理解为什么。
+
+1. **勾选前必须先「清除 + 回首页」**。直接从筛选结果页开始勾，会偶发混入残留已选（曾出现勾10篇、批量却15篇）。清空用 `#selectCount` 旁边的 `filenameClear()`，不是页面筛选栏的"清除"。清到 `#selectCount=0` 再选。
+2. **勾选不能裸 `checkbox.click()`**，CNKI 计数不准。用可靠事件链：`checked=false → dispatchEvent(click) → 调 cb.onclick()`。
+3. **用 CNKI 自己的计数做判据**：选完核对 `#selectCount` == 预期篇数，**不是**看 checkbox 的 `.checked`。两者不一致=有残留，先清除重选。
+4. 判定"勾选是否生效"的权威信号 = 批量页 `批量下载已选 N篇`，N 必须等于预期。
+
 ## 关键提示（两类策略共用的易错点）
 
 1. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
@@ -111,3 +120,5 @@ bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-l
 4. **pywinauto 用预写脚本执行**：不要 inline 写，避免 auto mode 拦截
 5. **中途遇到验证码**：暂停提示用户手动完成
 6. **第6步执行期间用户手不要碰鼠标**：模拟点击会被物理鼠标操作打断
+7. **打开 es6 用研学 exe 的 `-o` 参数**：`"C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe" -o "D:\下载\<es6>"`，别只靠 `os.startfile`（研学已在跑时不弹窗）。
+8. **多屏环境**：研学窗口可能弹在第二块屏（窗口坐标可能超过主屏宽）。截图必须用 `ImageGrab.grab(allScreens=True)` 或 `pyautogui.screenshot(allScreens=True)` 抓完整虚拟桌面；**点击原生窗口用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标**，`pyautogui.click` 只覆盖主屏点不到扩展屏。

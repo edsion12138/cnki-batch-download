@@ -89,8 +89,8 @@ bb-browser screenshot /tmp/step5_done.png --tab <batch>    # → Read：确认�
 ### ① 打开最新 es6
 
 ```bash
-# Windows
-python3 -c "import os; d=r'D:\下载'; f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); os.startfile(os.path.join(d,f))"
+# Windows（用研学 exe 的 -o 打开，研学已在跑时才不会静默不弹窗）
+python3 -c "import os,subprocess; d=r'D:\下载'; f=max([x for x in os.listdir(d) if x.endswith('.es6')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run([r'C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe', '-o', os.path.join(d,f)])"
 
 # Mac
 python3 -c "import os,subprocess; d=os.path.expanduser('~/Downloads'); f=max([x for x in os.listdir(d) if x.startswith('CNKI-')],key=lambda x:os.path.getmtime(os.path.join(d,x))); subprocess.run(['open',os.path.join(d,f)])"
@@ -102,35 +102,50 @@ sleep 4
 
 ```bash
 python3 -c "
-import time, ctypes, subprocess, re, pyautogui
-out=subprocess.check_output(['powershell','-Command','Get-Process -Name *知网* | Where MainWindowHandle | Select -First 1 MainWindowHandle'],shell=True).decode()
-hwnd=int(re.findall(r'\d+',out)[0])
-ctypes.windll.user32.ShowWindow(hwnd,9)   # 最小化则恢复
-time.sleep(0.3)
-ctypes.windll.user32.SetForegroundWindow(hwnd)
-time.sleep(0.5)
-img=pyautogui.screenshot()
+import ctypes, time
+from ctypes import wintypes
+from PIL import ImageGrab
+user32 = ctypes.windll.user32
+# 找研学窗口（用 Unicode 标题，避免中文/进程名编码问题）
+target=[]
+@ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+def cb(h,l):
+    n=user32.GetWindowTextLengthW(h)
+    if n:
+        b=ctypes.create_unicode_buffer(n+1); user32.GetWindowTextW(h,b,n+1)
+        if user32.IsWindowVisible(h) and '研学' in b.value: target.append((h,b.value))
+    return True
+user32.EnumWindows(cb,0)
+hwnd=target[0][0]
+user32.ShowWindow(hwnd,9)      # 最小化则恢复
+time.sleep(0.4)
+user32.SetForegroundWindow(hwnd)
+time.sleep(0.6)
+img=ImageGrab.grab(all_screens=True)   # 抓完整虚拟桌面（含扩展屏）
 img.save('D:/exue_full.png')
 print('size=', img.size)
 "
 ```
 
-> 关键：用 `pyautogui` 的**全屏截图**和 `pyautogui.click` ——两者共享同一坐标系，**天然免疫 DPI 缩放错位**。截图后 Read 得到的像素坐标，可直接作为点击坐标，无需做任何换算。
+> 关键：必须用 `ImageGrab.grab(all_screens=True)` 抓**完整虚拟桌面**。用户可能拓展了屏幕，研学窗口会弹在第二块屏上（坐标超出主屏宽）；`pyautogui.screenshot()` 只抓主屏，会漏掉扩展屏上的窗口。
+> 点击**不要用 `pyautogui.click`**：`pyautogui.size()` 只报主屏，点不到扩展屏坐标（实测点在 x>主屏宽 时无效）。**用 ctypes `SetCursorPos`+`mouse_event` 送物理屏幕坐标**，能跨扩展屏。
+> 从 `exue_full.png`（虚拟桌面图）读取的像素坐标 = SetCursorPos 的物理坐标（100% DPI 下 1:1，无需换算）。
 
 ### ③ 定位"导入并获取全文"按钮
 
-**Read `D:/exue_full.png`**，在图上找到"导入并获取全文"按钮，记下它的屏幕坐标 `(bx, by)`（把图当画布，直接用像素坐标）。
+**Read `D:/exue_full.png`**，在图上找到"导入并获取全文"按钮，记下它的**物理屏幕坐标** `(bx, by)`。
+> 多屏注意：如果窗口在第二块屏，`bx` 会比主屏宽度大（如 2560 宽主屏 + 按钮在扩展屏 → `bx`≈3500）。这是正常的，直接用它点击即可。
 
 ### ④ 点击 + 截图验证（自校正闭环）
 
 ```bash
-python3 -c "import pyautogui,time; pyautogui.click(bx, by); time.sleep(2)"
-python3 -c "import pyautogui; pyautogui.screenshot().save('D:/exue_after.png'); print('saved')"
-# → Read D:/exue_after.png：确认按钮被点中（状态变化/出现"正在获取全文"提示/无弹窗拦截）。
+python3 -c "import ctypes,time; u=ctypes.windll.user32; u.SetCursorPos(bx,by); time.sleep(0.3); u.mouse_event(2,0,0,0,0); u.mouse_event(4,0,0,0,0)"
+python3 -c "from PIL import ImageGrab; ImageGrab.grab(all_screens=True).save('D:/exue_after.png'); print('saved')"
+# → Read D:/exue_after.png：确认按钮被点中（对话框关闭/出现"正在获取全文"提示/无弹窗拦截）。
 #   若没点中：从第二张图看当前按钮实际在哪，修正 (bx,by) 再点，最多重试 2-3 次。
 ```
 
-**Mac**：同样思路，用全屏截图定位，点击用 `cliclick c:<bx> <by>` 或 `osascript -e 'tell application "System Events" to click at {<bx>,<by>}'`。截图用 `pyautogui.screenshot().save(...)`（Mac 无 DPI 缩放问题）。
+**Mac**：同样思路，用全屏截图定位，点击用 `cliclick c:<bx> <by>` 或 `osascript -e 'tell application "System Events" to click at {<bx>,<by>}'`。截图用 `pyautogui.screenshot().save(...)`（Mac 无 DPI 缩放，且单屏）。
 
 ---
 
@@ -161,11 +176,23 @@ for d in os.listdir(base):
 ```
 
 ```bash
-# ② 截图确认研学界面已显示新入库文献（双保险）
-python3 -c "import pyautogui,ctypes,subprocess,re,time
-out=subprocess.check_output(['powershell','-Command','Get-Process -Name *知网* | Where MainWindowHandle | Select -First 1 MainWindowHandle'],shell=True).decode()
-hwnd=int(re.findall(r'\d+',out)[0]); ctypes.windll.user32.SetForegroundWindow(hwnd); time.sleep(0.5)
-pyautogui.screenshot().save('D:/exue_library.png'); print('saved')"
+# ② 截图确认研学界面已显示新入库文献（双保险，含扩展屏）
+python3 -c "
+import ctypes, time
+from ctypes import wintypes
+from PIL import ImageGrab
+user32=ctypes.windll.user32
+target=[]
+@ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+def cb(h,l):
+    n=user32.GetWindowTextLengthW(h)
+    if n:
+        b=ctypes.create_unicode_buffer(n+1); user32.GetWindowTextW(h,b,n+1)
+        if user32.IsWindowVisible(h) and '研学' in b.value: target.append((h,b.value))
+    return True
+user32.EnumWindows(cb,0)
+user32.SetForegroundWindow(target[0][0]); time.sleep(0.5)
+ImageGrab.grab(all_screens=True).save('D:/exue_library.png'); print('saved')"
 # → Read D:/exue_library.png：列表里应能看到刚下载的 PDF / 无异常弹窗
 ```
 
@@ -174,8 +201,9 @@ pyautogui.screenshot().save('D:/exue_library.png'); print('saved')"
 ## 坐标与截图要点
 
 - **浏览器内**：一律用 `snap` 的 ref 点击，不手动算浏览器内坐标（浏览器页面有缩放/DPI，ref 才是准的）。
-- **原生窗口**：用 `pyautogui` 全屏截图 + `pyautogui.click`，共享坐标系，免换算。
+- **原生窗口**：`ImageGrab.grab(all_screens=True)` 抓虚拟桌面 → 图上定位 → **ctypes `SetCursorPos`+`mouse_event`** 送物理坐标点击。别用 `pyautogui.click`（只覆盖主屏，点不到扩展屏）。
 - **自校正闭环**：任何一次点击后都要截图确认；没点中就根据新图修正重试，而不是死守第一次的坐标。
+- **多屏坐标**：`bx,by` 是整块虚拟桌面的物理坐标，可能大于主屏宽度（如主屏2560+扩展屏 → 目标在扩展屏 `bx≈3500`）。直接用，不要按主屏裁剪或取模。
 - 截图路径统一放临时目录（Windows `D:\\`，Mac `~`），大小写/中文路径注意转义。
 
 ## 降级指引
@@ -183,4 +211,4 @@ pyautogui.screenshot().save('D:/exue_library.png'); print('saved')"
 如果视觉模式执行中遇到以下情况，**回退策略B**（`references/dom.md`）：
 1. Read 截图后你实际看不到内容（空白/占位）→ 本会话其实无视觉能力。
 2. 重复截图确认仍无法判断状态，且尝试 2 次无果 → 别硬耗，改用 DOM 判断。
-3. `pyautogui` 缺失 → 降级策略B 的硬编码坐标（需先校准）。
+3. `ImageGrab` / `ctypes` 缺失 → 降级策略B 的硬编码坐标（需先校准）。
