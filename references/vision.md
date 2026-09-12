@@ -14,7 +14,7 @@
 
 ## 重要：怎么"看"截图
 
-`bb-browser screenshot <路径>` 或 `pyautogui.screenshot().save(<路径>)` 只负责把画面存成 png。**你必须用 Read 工具打开这个 png，才真正看到内容**。看不到图就谈不上视觉模式——如果 Read 后仍是空白/尺寸占位，说明本会话其实无视觉能力，立即降级到策略B（`references/dom.md`）。
+`agent-browser --session cnki-batch screenshot <路径>` 或 `pyautogui.screenshot().save(<路径>)` 只负责把画面存成 png。**你必须用 Read 工具打开这个 png，才真正看到内容**。看不到图就谈不上视觉模式——如果 Read 后仍是空白/尺寸占位，说明本会话其实无视觉能力，立即降级到策略B（`references/dom.md`）。
 
 ---
 
@@ -22,22 +22,22 @@
 
 ```bash
 # ① 强制清除（同策略B的 JS，纯JS不依赖页面按钮）
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem:checked');for(var i=cbs.length-1;i>=0;i--){cbs[i].click();}var n=0;document.querySelectorAll('.result-table-list tbody input.cbItem').forEach(function(c){if(c.checked)n++;});if(n>0){var all=document.querySelectorAll('.result-table-list tbody input.cbItem');all.forEach(function(c){if(c.checked)c.click();});var m=0;all.forEach(function(c){if(c.checked)m++;});return'retry:'+m;}return 0;})()" --tab <tab>
+agent-browser --session cnki-batch eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem:checked');for(var i=cbs.length-1;i>=0;i--){cbs[i].click();}var n=0;document.querySelectorAll('.result-table-list tbody input.cbItem').forEach(function(c){if(c.checked)n++;});if(n>0){var all=document.querySelectorAll('.result-table-list tbody input.cbItem');all.forEach(function(c){if(c.checked)c.click();});var m=0;all.forEach(function(c){if(c.checked)m++;});return'retry:'+m;}return 0;})()"
 # ⚠️ 必须返回 0，否则再执行一次
 
 # ② 截图确认清除成功
-bb-browser screenshot /tmp/step3_cleared.png --tab <tab>   # Mac 换 /tmp 为 ~/Downloads
+agent-browser --session cnki-batch screenshot /tmp/step3_cleared.png   # Mac 换 /tmp 为 ~/Downloads
 # → Read /tmp/step3_cleared.png：目视结果表左列复选框应全部未勾选。若还有勾选 → 重跑①
 
 # ③ 排序（可选）：先点"被引"
-bb-browser eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()" --tab <tab>
+agent-browser --session cnki-batch eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()"
 sleep 3  # DOM 全作废，重新查询
 
 # ④ 重新勾选想下载的 N 篇
-bb-browser eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];indices.forEach(function(i){cbs[i].click();});return{ok:[cbs[0].checked,cbs[1].checked,cbs[2].checked]};})()" --tab <tab>
+agent-browser --session cnki-batch eval "(function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];indices.forEach(function(i){cbs[i].click();});return{ok:[cbs[0].checked,cbs[1].checked,cbs[2].checked]};})()"
 
 # ⑤ 截图确认勾选
-bb-browser screenshot /tmp/step3_checked.png --tab <tab>
+agent-browser --session cnki-batch screenshot /tmp/step3_checked.png
 # → Read：前几行应呈勾选态（勾选框打勾或行高亮）。ok=[true,true,true] 且截图一致 → 进入下一步
 ```
 
@@ -47,22 +47,24 @@ bb-browser screenshot /tmp/step3_checked.png --tab <tab>
 
 ```bash
 # ① 看"批量操作"按钮在哪
-bb-browser screenshot /tmp/step4_menu.png --tab <tab>   # → Read：确认结果表上方有"批量操作"
+agent-browser --session cnki-batch screenshot /tmp/step4_menu.png   # → Read：确认结果表上方有"批量操作"
 
 # ② snap 拿"批量操作"的 ref，原生点击展开下拉（等1.5s，CNKI菜单有过渡动画）
-bb-browser snap -i -c --tab <tab> | grep "批量操作"
-bb-browser click @<ref> --tab <tab>
+agent-browser --session cnki-batch snapshot -i -c | grep "批量操作"
+agent-browser --session cnki-batch click @<ref>
 sleep 1.5
 
 # ③ 截图确认下拉已展开、能看到"下载到研学"
-bb-browser screenshot /tmp/step4_dropdown.png --tab <tab>   # → Read：确认菜单展开且含"下载到研学"。没展开→重点或换ref
-bb-browser eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')" --tab <tab>
+agent-browser --session cnki-batch screenshot /tmp/step4_dropdown.png   # → Read：确认菜单展开且含"下载到研学"。没展开→重点或换ref
+agent-browser --session cnki-batch eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')"
 # 等新 batch tab 出现（原 sleep 3，改轮询 tab 列表，最多 ~10s）
 for i in $(seq 1 20); do
-  bb-browser tab 2>/dev/null | grep -q "manage/batch" && break
+  agent-browser --session cnki-batch tab 2>/dev/null | grep -q "manage/batch" && break
   sleep 0.5
 done
-bb-browser tab | grep "manage/batch"
+agent-browser --session cnki-batch tab | grep "manage/batch"
+# 将上一步显示的稳定标签 ID（如 t2）代入并切换
+agent-browser --session cnki-batch tab <批量页ID>
 ```
 
 ---
@@ -71,11 +73,11 @@ bb-browser tab | grep "manage/batch"
 
 ```bash
 # ① 截 batch tab，看"批量下载已选 N篇"和按钮
-bb-browser screenshot /tmp/step5_batch.png --tab <batch>   # → Read：确认 N 篇数量正确、按钮可见
-bb-browser snap -i -c --tab <batch> | grep "批量下载"
+agent-browser --session cnki-batch screenshot /tmp/step5_batch.png   # → Read：确认 N 篇数量正确、按钮可见
+agent-browser --session cnki-batch snapshot -i -c | grep "批量下载"
 # 记下下载前最新 es6 的 mtime，作为"新文件"的参照
 REF=$(stat -c %Y /d/下载/*.es6 2>/dev/null | sort -n | tail -1)
-bb-browser click @<ref> --tab <batch>
+agent-browser --session cnki-batch click @<ref>
 # 等新 es6 落地（替代固定 sleep 3，等文件出现即返回）
 bash scripts/wait_es6.sh "$REF" || echo "没等到新es6，用 ls 兜底查看"
 ls -lt /d/下载/ | head -1

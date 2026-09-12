@@ -11,19 +11,19 @@
 
 ```bash
 # ① 真正清除已选（用 CNKI 的 filenameClear，不是筛选栏"清除"）
-bb-browser eval "(function(){var a=document.querySelectorAll('a,#selectCount a');var clr=Array.from(document.querySelectorAll('a')).find(x=>/filenameClear/.test(x.getAttribute('href')||''));if(clr){clr.click();return 'clicked';}var el=document.querySelector('#selectCount');if(el){var p=el.closest('div');var a2=p&&p.querySelector('a');if(a2){a2.click();return 'clicked-parent';}}return 'none';})()" --tab <tab>
+agent-browser --session cnki-batch eval "(function(){var a=document.querySelectorAll('a,#selectCount a');var clr=Array.from(document.querySelectorAll('a')).find(x=>/filenameClear/.test(x.getAttribute('href')||''));if(clr){clr.click();return 'clicked';}var el=document.querySelector('#selectCount');if(el){var p=el.closest('div');var a2=p&&p.querySelector('a');if(a2){a2.click();return 'clicked-parent';}}return 'none';})()"
 sleep 1
-bb-browser eval "document.querySelector('#selectCount')?.innerText" --tab <tab>
+agent-browser --session cnki-batch eval "document.querySelector('#selectCount')?.innerText"
 # 必须显示 0，否则再点一次清除
 
 # ② 排序（可选）
-bb-browser eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()" --tab <tab>
+agent-browser --session cnki-batch eval "document.evaluate(\"//*[text()='被引']\",document,null,9,null).singleNodeValue.click()"
 sleep 3  # DOM 全作废
 
 # ③ 重新勾选（可靠事件链：checked=false → dispatchEvent(click) → onclick()）
-bb-browser eval "(async function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];for(var k=0;k<indices.length;k++){var cb=cbs[indices[k]];if(!cb.checked){cb.checked=false;cb.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,120));if(typeof cb.onclick==='function')cb.onclick();}}return 'done';})()" --tab <tab>
+agent-browser --session cnki-batch eval "(async function(){var cbs=document.querySelectorAll('.result-table-list tbody input.cbItem');var indices=[0,1,2];for(var k=0;k<indices.length;k++){var cb=cbs[indices[k]];if(!cb.checked){cb.checked=false;cb.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,120));if(typeof cb.onclick==='function')cb.onclick();}}return 'done';})()"
 sleep 1
-bb-browser eval "document.querySelector('#selectCount')?.innerText" --tab <tab>
+agent-browser --session cnki-batch eval "document.querySelector('#selectCount')?.innerText"
 # 核对 CNKI 自己的已选计数 == 预期篇数（不是只看 checkbox.checked）
 ```
 
@@ -35,18 +35,20 @@ bb-browser eval "document.querySelector('#selectCount')?.innerText" --tab <tab>
 
 ```bash
 # snap 找"批量操作" ref
-bb-browser snap -i -c --tab <tab> | grep "批量操作"
+agent-browser --session cnki-batch snapshot -i -c | grep "批量操作"
 
 # 原生点击打开下拉（等待 1.5s，CNKI 菜单有过渡动画）
-bb-browser click @<ref> --tab <tab>
+agent-browser --session cnki-batch click @<ref>
 sleep 1.5
 
 # jQuery 触发"下载到研学"（CNKI 自己创建 batch tab）
-bb-browser eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')" --tab <tab>
+agent-browser --session cnki-batch eval "jQuery(document.evaluate(\"//*[text()='下载到研学']\",document,null,9,null).singleNodeValue).trigger('click')"
 sleep 3
 
 # 确认新 batch tab
-bb-browser tab | grep "manage/batch"
+agent-browser --session cnki-batch tab | grep "manage/batch"
+# 将上一步显示的稳定标签 ID（如 t2）代入并切换
+agent-browser --session cnki-batch tab <批量页ID>
 ```
 
 ---
@@ -54,10 +56,10 @@ bb-browser tab | grep "manage/batch"
 ## 第5步：批量下载
 
 ```bash
-bb-browser snap -i -c --tab <batch> | grep "批量下载"
+agent-browser --session cnki-batch snapshot -i -c | grep "批量下载"
 # 确认 "批量下载已选 N篇 文献"
 REF=$(stat -c %Y /d/下载/*.es6 2>/dev/null | sort -n | tail -1)
-bb-browser click @<ref> --tab <batch>
+agent-browser --session cnki-batch click @<ref>
 # 等新 es6 落地（替代固定 sleep 3）
 bash scripts/wait_es6.sh "$REF" || echo "没等到新es6，用 ls 兜底"
 ls -lt /d/下载/ | head -1
@@ -161,7 +163,7 @@ python3 scripts/wait_papers.py "$REF" <N篇数> 120
 | 下载含旧文献 | 清除未生效 | 清除后验证 checked=0 |
 | 导出后无 batch tab | 旧 tab 占用了窗口名 | 关闭所有 manage/batch tab，重新导出 |
 | batch 页显示 0 篇 | jQuery trigger 未触发跳转 | 确认原生 click 打开了菜单；重试导出 |
-| jQuery trigger 不生效 | 菜单未用原生点击打开 | snap → click @ref → jQuery trigger |
+| jQuery trigger 不生效 | 菜单未用原生点击打开 | snapshot → click @ref → jQuery trigger |
 | 登录误判"未登录" | 检查字符串错误 | 用 `includes('机构登录')` |
 | 导入坐标不准 | 窗口位置/DPI变了 | 在新电脑上重校准相对坐标 |
 | 研学PID找不到 | 进程名可能是乱码 | `Get-Process -Name '*知网*'` + MainWindowHandle过滤 |
@@ -188,7 +190,7 @@ python3 scripts/wait_papers.py "$REF" <N篇数> 120
 |------|--------|---------|
 | es6下载目录 | `D:\下载\` | 取用户浏览器默认下载路径，或通过 `chrome://downloads/` 获取 |
 | 研学库根目录 | `D:\E-StudyData\15760463670\Literature\` | 研学→设置→文献库位置，不同用户ID不同 |
-| Python/工具链 | Windows: `python3`, `bb-browser`, `pywinauto`<br>Mac: `python3`, `bb-browser`, `pyautogui` + `cliclick`(可选) | 需一并安装 |
+| Python/工具链 | Windows: `python3`, `agent-browser`, `pywinauto`<br>Mac: `python3`, `agent-browser`, `pyautogui` + `cliclick`(可选) | 需一并安装 |
 | es6下载目录 | Windows: `D:\下载\` / Mac: `~/Downloads/` | 取浏览器默认下载路径 |
 
 ### 可能需要重新校准的
@@ -196,7 +198,7 @@ python3 scripts/wait_papers.py "$REF" <N篇数> 120
 |------|------|---------|
 | **导入按钮坐标** | **高** | **Windows**：用户悬停→ `pyautogui.position()` → 减窗口左上角。<br>**Mac**：`osascript` + `cliclick`，坐标用 `pyautogui.position()` 获取。 |
 | 研学窗口类名 `CSimpleFrame` | 低 — 研学版本升级可能改类名 | `pywinauto` 扫描所有窗口，找 title 含"知网研学"的 |
-| bb-browser 登录检测 | 中 — 不同机构登录后页面元素可能不同 | 用 `snap` 查看登录后页面特征文字 |
+| agent-browser 登录检测 | 中 — 不同机构登录后页面元素可能不同 | 用 `snapshot` 查看登录后页面特征文字 |
 
 ### 不需要改的
 | 项目 | 原因 |

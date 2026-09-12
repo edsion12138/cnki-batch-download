@@ -1,140 +1,101 @@
 ---
 name: cnki-batch-download
-description: 批量下载知网文献并导入知网研学。运行时会根据模型视觉能力自动选策略——多模态模型走截图视觉策略（截图确认状态、精准定位导入按钮），单模态模型走DOM策略。支持关键词检索、高级检索（CSSCI/北大核心）、按被引排序。使用bb-browser操控浏览器 + pywinauto/pyautogui 桌面自动化。
-argument-hint: "[检索主题] [筛选条件] [下载数量] [--strategy vision|dom] [--import manual|auto]"
+description: 批量检索知网文献、选择结果、导出知网研学 es6 文件，并通过知网研学获取全文。支持关键词或高级检索、CSSCI/北大核心筛选、按被引排序、视觉或 DOM 操作策略，以及手动或自动导入；不用于绕过登录、验证码、机构权限或下载额度。
 ---
 
-# CNKI 批量下载 + 导入研学
+# CNKI 批量下载并导入研学
 
-## 核心流程
+核心流程：策略选择 → 检索 → 清除旧选择 → 排序 → 重新选择 → 导出研学 → 下载 es6 → 导入 → 验证入库。
 
-策略选择 → 搜索 → 清除+验证 → 排序 → 重新勾选 → 导出研学 → 下载es6 → 打开→导入→验证入库
+## 前置条件
 
-## 运行策略选择（每次运行第一件事）
+1. 安装并登录知网研学。
+2. 在“设置 → 知网获取全文设置 → 其他设置”中勾选“默认优先获取PDF格式文献”，否则可能得到 CAJ 文件。
+3. 浏览器已登录 CNKI，并具有机构文献下载权限。
+4. 知网研学中已创建目标专题；导入会进入最近使用的专题。
+5. 确认当前机构和 IP 的下载额度。出现限额提示时停止，不重复重试。
 
-**先确定本会话用哪套策略**。这与当前模型的视觉能力强相关——有视觉能力的模型能通过截图看清屏幕，做事更精准；没有的就只能靠 DOM 判断。
+## 参数与策略
 
-判定方法（运行时自测）：
+从请求中识别检索词、筛选条件、下载数量，以及两个可选参数：
 
-```bash
-# 浏览器已打开且停留在知网搜索页后，截一张当前页
-bb-browser screenshot /tmp/capability.png --tab <tab>
+- `--strategy vision|dom`：未指定时截图自测；能实际读取页面图像则用 `vision`，否则用 `dom`。
+- `--import manual|auto`：默认 `manual`。只有用户明确选择自动导入且研学已放在主屏时，才运行 `scripts/click_import.py`。
+
+确定策略后必须读取对应文件：
+
+- 视觉模式：[references/vision.md](references/vision.md)
+- DOM 模式：[references/dom.md](references/dom.md)
+
+## 浏览器会话
+
+使用 `agent-browser`。首次执行：
+
+```powershell
+agent-browser skills get core
+agent-browser doctor --offline --quick
+agent-browser --session cnki-batch --headed --auto-connect open "https://kns.cnki.net/kns8s/search"
+agent-browser --session cnki-batch snapshot -i -u
 ```
 
-然后用 Read 工具打开 `/tmp/capability.png`，看自己**是否真的能看到页面内容**：
+自动连接不可用时使用持久化 `--profile`。不要读取、输出或保存用户凭据。函数模板必须包成 `(<函数>)()`，再编码为 Base64 传给 `agent-browser eval -b`。页面跳转、排序、弹窗或切换标签后，旧 `@eN` 引用立即失效，必须重新快照。
 
-- **能看到**（按钮、文字、结果表格都清晰）→ 本会话有视觉能力 → 走 **策略A · 视觉模式** → `references/vision.md`
-- **只能看到空白 / 尺寸占位 / 完全感知不到画面** → 本会话无视觉能力 → 走 **策略B · DOM模式** → `references/dom.md`
+视觉能力自测：
 
-手动覆盖：如果自测有歧义想强制某套，在参数里传 `--strategy vision` 或 `--strategy dom`，跳过自测直接走对应策略。
-
-> 不要凭"我猜这个模型会不会看图"来判断。**真的截一张，真的读进去**，以你实际看到的东西为准。这是整个流程最前面的一步，选错了后面全部白忙。
-
-## 使用前必读
-
-### 前置条件
-1. **安装知网研学桌面端**：[官网下载](https://estudy.cnki.net/)，Windows/Mac 均支持。安装后登录机构账号
-2. **设置优先下载 PDF**：研学 → 设置 → 知网获取全文设置 → 其他设置 → 勾选"默认优先获取PDF格式文献"。否则下载的可能全是不便后续处理的 CAJ 文件
-3. **浏览器已登录知网**：在 Chrome 中提前登录一次（机构登录或 IP 登录）
-4. **创建目标专题**：在研学中新建一个专题（如"文献下载"），论文导入时自动进入最近使用的专题
-
-### 每日下载额度
-- 知网批量下载每日上限 **100 篇**，与校园网 IP 绑定
-- 校外访问（VPN/机构SSO）可能无法使用批量下载功能
-- 超出限额或 IP 不符时，批量页会提示下载失败
-
-### 平台兼容性
-
-| 步骤 | Windows | Mac |
-|------|---------|-----|
-| 搜索→导出→es6落地 | bb-browser（跨平台） | bb-browser（跨平台） |
-| 打开es6 | 研学 exe `-o`（`os.startfile` 仅兜底） | `open` 命令 |
-| 点击"导入并获取全文" | 默认**用户手动点**；`--import auto` 则自动点（须研学在主屏） | 用户手动 / `--import auto` |
-| 验证PDF入库 | `scripts/wait_papers.py` 轮询（跨平台） | 同上 |
-
-**导入方式先用 `--import` 说清**（默认 `manual`）：
-- **`manual`（默认）**：打开 es6 弹出"导入题录"对话框后，让用户手动点"导入并获取全文"。变数最少、最稳。
-- **`auto`**：**必须提前让用户把知网研学放到主屏**（弹窗位置才稳定、坐标可一次校准），然后用 `scripts/click_import.py` 按对话框坐标自动点击。只要研学在主屏，弹窗每次在固定位置，坐标可靠，无需每次截图定位。
-**DOM模式** Windows 用 `pywinauto`+ctypes 硬编码坐标兜底。详见各自 reference。
-
-## 通用步骤（无论哪个策略都要走）
-
----
-
-## 第0步：首次自检 + 打开浏览器
-
-```bash
-# 首次运行时确认工具链
-which bb-browser && python3 -c "import pywinauto" && echo "OK" || echo "请先安装 bb-browser 和 pywinauto"
-ls /d/下载/ > /dev/null || echo "下载目录不存在"
+```powershell
+agent-browser --session cnki-batch screenshot "<绝对临时路径>"
 ```
 
-```bash
-bb-browser open https://kns.cnki.net/kns8s/search
-bb-browser eval "document.body.innerText.includes('机构登录')?'未登录':'已登录'" --tab <tab>
+用图像查看工具打开截图。能辨认按钮、文字与结果表格才进入视觉模式；看不到实际画面时进入 DOM 模式。
+
+## 通用步骤
+
+### 1. 检索与预览
+
+普通检索使用 `input.search-input` 和 `input.search-btn`；高级检索调用 `cnki-advanced-search`。提取前 10 条，让用户确认下载范围和排序。验证码仅在 `#tcaptcha_transform_dy` 可见时成立；出现时保持浏览器打开，请用户人工完成。
+
+### 2. 清除、排序与选择
+
+1. 勾选前调用 `#selectCount` 附近的 `filenameClear()`，回首页，并确认 CNKI 的已选计数为 0。
+2. 排序后等待结果刷新，重新查询 DOM，不能复用旧元素。
+3. 选择时触发完整事件链：`checked=false → dispatchEvent(click) → cb.onclick()`。
+4. 以 `#selectCount` 为准确认选中数量，不能只看 checkbox 的 `.checked`。
+5. 批量页显示的“批量下载已选 N 篇”必须与用户确认数量一致。
+
+### 3. 导出与下载 es6
+
+1. 用 `agent-browser --session cnki-batch tab` 找到并关闭残留的 `manage/batch` 标签。
+2. 回检索页重新快照，点击“批量操作”与“下载到研学”。普通点击不生效时，再用页面已有 jQuery 触发菜单项。
+3. 切换到新的 `manage/batch` 标签，重新快照并核对 N。
+4. 使用 `agent-browser --session cnki-batch download <按钮ref> <绝对es6路径>`；按钮选择器为 `#btn-download-all`。
+5. 用 `scripts/wait_es6.sh` 或等价的本机文件轮询确认生成了新的 es6，不能靠固定睡眠猜测。
+
+### 4. 导入研学
+
+Windows 优先显式调用研学程序打开 es6：
+
+```powershell
+& "C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe" -o "<es6绝对路径>"
 ```
-未登录时暂停，提示用户登录。
 
-**会话恢复**：如果浏览器已有 tab，先 `bb-browser tab` 检查，关闭所有残留的 `manage/batch` tab。
+- `manual`：提示用户点击“导入并获取全文”，完成后继续。
+- `auto`：确认研学在主屏后运行 `python scripts/click_import.py`。首次使用、DPI 或窗口布局变化时重新校准 RELX/RELY。
 
----
+多屏环境下使用 `scripts/grab_window.py` 获取研学窗口区域和物理坐标；跨屏点击使用脚本中的 ctypes 物理坐标方式，不假设主屏坐标范围。
 
-## 第1步：检索
+### 5. 验证入库
 
-```bash
-bb-browser eval "(async function(){var i=document.querySelector('input.search-input');i.value='KEYWORDS';i.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('input.search-btn').click();await new Promise(r=>setTimeout(r,4000));return document.querySelector('.pagerTitleCell')?.innerText?.match(/([\d,]+)/)?.[1];})()" --tab <tab>
+在点击导入前记录 epoch 秒数，运行：
+
+```powershell
+python scripts/wait_papers.py <开始时间> <预期篇数> 120
 ```
 
-高级检索参见 cnki-advanced-search skill。
+从研学设置获取文献库根目录，不硬编码用户 ID。至少报告请求数量、es6 数量、最终入库数量、PDF/CAJ 数量、缺失题名，以及登录、验证码或额度状态。
 
----
+## 边界与停止条件
 
-## 第2步：获取结果 + 用户确认
-
-```bash
-bb-browser eval "(function(){var rows=document.querySelectorAll('.result-table-list tbody tr');return Array.from(rows).slice(0,10).map((r,i)=>({n:i+1,title:r.querySelector('td.name a.fz14')?.innerText?.trim()?.substring(0,60),author:r.querySelector('td.author a')?.innerText?.trim()||'',journal:r.querySelector('td.source a')?.innerText?.trim()||'',date:r.querySelector('td.date')?.innerText?.trim()||'',cites:r.querySelector('td.quote')?.innerText?.trim()||''}));})()" --tab <tab>
-```
-
-展示结果，确认下载范围和排序方式。
-
-> 如果结果列表为空或页面弹出验证码（`#tcaptcha_transform_dy` 可见），暂停并提示用户完成验证码。
-
----
-
-## 进入对应策略（第3步起的差异部分）
-
-- **模型有视觉能力** → 读 `references/vision.md` 走 **策略A**（截图确认 + 精准定位导入按钮）
-- **模型无视觉能力** → 读 `references/dom.md` 走 **策略B**（DOM 判断 + ref 点击 + 硬编码坐标兜底）
-
-## 勾选/导出铁律（第3-5步，两类策略都用）
-
-> 这是从真实翻车里总结的，**比"用什么策略"更容易踩坑**。逐条理解为什么。
-
-1. **勾选前必须先「清除 + 回首页」**。直接从筛选结果页开始勾，会偶发混入残留已选（曾出现勾10篇、批量却15篇）。清空用 `#selectCount` 旁边的 `filenameClear()`，不是页面筛选栏的"清除"。清到 `#selectCount=0` 再选。
-2. **勾选不能裸 `checkbox.click()`**，CNKI 计数不准。用可靠事件链：`checked=false → dispatchEvent(click) → 调 cb.onclick()`。
-3. **用 CNKI 自己的计数做判据**：选完核对 `#selectCount` == 预期篇数，**不是**看 checkbox 的 `.checked`。两者不一致=有残留，先清除重选。
-4. 判定"勾选是否生效"的权威信号 = 批量页 `批量下载已选 N篇`，N 必须等于预期。
-
-## 提速要点（用脚本等状态，别盲等）
-
-> 整个流程的耗时大头是**固定 sleep + 反复读大图**，可用脚本改成"等状态出现再走"，快且稳。scripts/ 下四个脚本：
-
-| 脚本 | 作用（替代什么） |
-|------|----------------|
-| `scripts/wait.sh` | 轮询执行一段 JS，直到含期望子串（替代 `sleep 3/4` 盲等搜索/过滤/排序/导出） |
-| `scripts/wait_es6.sh` | 等到下载目录出现**新** es6（替代 `sleep 6` 等下载） |
-| `scripts/wait_papers.py` | 轮询研学库，直到新落库 PDF 达到 N 篇（替代"等30秒"盲等验证） |
-| `scripts/grab_window.py` | 只抓研学**窗口区域**小图（替代抓整块 4480×1600 虚拟桌面再裁剪多次） |
-
-**原则**：任何"等一会儿"都用脚本轮询到状态出现，别再写死 `sleep N`。网络快就早返回，慢有超时兜底。
-
-## 关键提示（两类策略共用的易错点）
-
-1. **每次 snap 后逐个确认 ref**：ref 会变，不要复用上次的。找到目标文字后只点那个 ref
-2. **JS eval 只用 function 表达式**：禁用箭头函数 + var + return 混用，避免 `SyntaxError`
-3. **导出前必须关旧 batch tab**：`bb-browser tab | grep batch` 找出来逐个 close
-4. **pywinauto 用预写脚本执行**：不要 inline 写，避免 auto mode 拦截
-5. **中途遇到验证码**：暂停提示用户手动完成
-6. **第6步执行期间用户手不要碰鼠标**：模拟点击会被物理鼠标操作打断
-7. **打开 es6 用研学 exe 的 `-o` 参数**：`"C:\ProgramData\CNKI\CNKI E-Study\知网研学.exe" -o "D:\下载\<es6>"`，别只靠 `os.startfile`（研学已在跑时不弹窗）。
-8. **多屏环境**：研学窗口可能弹在第二块屏（窗口坐标可能超过主屏宽）。抓屏用 `scripts/grab_window.py`（只抓窗口区域）；**点击原生窗口用 ctypes `SetCursorPos`+`mouse_event` 送物理坐标**，`pyautogui.click` 只覆盖主屏点不到扩展屏。
+- 不绕过 CNKI 登录、验证码、机构授权或下载限额。
+- 不在用户未确认范围时批量下载。
+- 不删除已有 es6、PDF、CAJ 或研学库文件。
+- 页面显示 0 篇、数量不一致或连续两次操作无效时停止该步骤并诊断，不盲目重试。
